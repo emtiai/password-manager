@@ -40,7 +40,7 @@ export async function create(password) {
   const salt = randomBytes(16);
   const kek = await deriveKeyFromPassword(password, salt, PBKDF2_ITERATIONS);
   vaultKey = await generateVaultKey();
-  data = { entries: [], settings: {} };
+  data = { entries: [], settings: {}, deleted: {} };
   record = {
     version: 1,
     kdf: { name: 'PBKDF2-SHA256', salt: toB64(salt), iterations: PBKDF2_ITERATIONS },
@@ -55,6 +55,7 @@ async function openWith(key) {
   data = await decryptJson(record.data, key);
   data.entries ??= [];
   data.settings ??= {};
+  data.deleted ??= {}; // id -> Löschzeitpunkt, damit Löschungen beim Teilen mit übertragen werden
   vaultKey = key;
 }
 
@@ -158,6 +159,7 @@ export async function upsertEntry(entry) {
 
 export async function removeEntry(id) {
   data.entries = data.entries.filter((e) => e.id !== id);
+  data.deleted[id] = Date.now();
   await persist();
 }
 
@@ -188,9 +190,12 @@ export function exportEncrypted() {
   }, null, 2);
 }
 
-function mergeEntries(incoming) {
+// Führt Einträge eines anderen Geräts zusammen. Pro Eintrag gewinnt die neuere Änderung;
+// Löschungen werden über Löschvermerke (deleted) übertragen.
+function mergeEntries(incoming, incomingDeleted = {}) {
   let added = 0;
   let updated = 0;
+  let removed = 0;
   for (const e of incoming) {
     if (!e || typeof e !== 'object') continue;
     const clean = {
@@ -206,16 +211,28 @@ function mergeEntries(incoming) {
       updated: Number(e.updated) || Date.now(),
       lastUsed: Number(e.lastUsed) || 0,
     };
+    if ((data.deleted[clean.id] || 0) >= clean.updated) continue; // hier schon gelöscht
     const i = data.entries.findIndex((x) => x.id === clean.id);
     if (i < 0) {
       data.entries.push(clean);
+      delete data.deleted[clean.id];
       added++;
     } else if (clean.updated > (data.entries[i].updated || 0)) {
-      data.entries[i] = clean;
+      data.entries[i] = { ...clean, lastUsed: Math.max(clean.lastUsed, data.entries[i].lastUsed || 0) };
       updated++;
     }
   }
-  return { added, updated };
+  for (const [id, when] of Object.entries(incomingDeleted && typeof incomingDeleted === 'object' ? incomingDeleted : {})) {
+    const t = Number(when) || 0;
+    if (!t) continue;
+    const i = data.entries.findIndex((x) => x.id === id);
+    if (i >= 0 && (data.entries[i].updated || 0) <= t) {
+      data.entries.splice(i, 1);
+      removed++;
+    }
+    data.deleted[id] = Math.max(data.deleted[id] || 0, t);
+  }
+  return { added, updated, removed };
 }
 
 export async function importEncrypted(text, password) {
@@ -234,10 +251,18 @@ export async function importEncrypted(text, password) {
     throw new Error('Falsches Passwort für diese Export-Datei.');
   }
   const imported = await decryptJson(file.data, key);
-  const result = mergeEntries(imported.entries ?? []);
+  const result = mergeEntries(imported.entries ?? [], imported.deleted ?? {});
   await persist();
   return result;
 }
+
+export const isEncryptedExport = (text) => {
+  try {
+    return JSON.parse(text)?.format === EXPORT_FORMAT;
+  } catch {
+    return false;
+  }
+};
 
 // CSV-Import (Chrome/Edge, Firefox, Bitwarden, KeePass-CSV …): erkennt typische Spaltennamen.
 export async function importCsv(text) {

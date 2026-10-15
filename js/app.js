@@ -4,7 +4,7 @@ import { extractDomains, matchEntries, normalizeHost } from './domain.js';
 import { isBiometricAvailable, describeBiometricError } from './webauthn.js';
 import { requestPersistence } from './storage.js';
 
-const APP_VERSION = 4; // bei jeder Änderung zusammen mit VERSION in sw.js erhöhen
+const APP_VERSION = 5; // bei jeder Änderung zusammen mit VERSION in sw.js erhöhen
 const app = document.getElementById('app');
 const isAndroid = /Android/i.test(navigator.userAgent);
 const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -295,6 +295,7 @@ function viewLock() {
       go(state.pendingView);
       state.pendingView = null;
     }
+    processInbox();
   };
   form.addEventListener('submit', busy(btn, async (e) => {
     e.preventDefault();
@@ -332,7 +333,8 @@ function viewLock() {
 
   const ctx = state.context?.domains?.[0];
   return h('main', { class: 'center' },
-    h('div', { class: 'hero' }, icon('lock'), h('h1', {}, 'Gesperrt'), ctx && h('p', { class: 'muted' }, `Suche: ${ctx}`)),
+    h('div', { class: 'hero' }, icon('lock'), h('h1', {}, 'Gesperrt'), ctx && h('p', { class: 'muted' }, `Suche: ${ctx}`),
+      state.inboxPending && h('p', { class: 'muted' }, '📥 Empfangene Datei wird nach dem Entsperren übernommen.')),
     bioBtn, form);
 }
 
@@ -585,6 +587,50 @@ function viewEdit() {
   return h('div', {}, header(existing ? 'Bearbeiten' : 'Neuer Eintrag', { back: true }), h('main', {}, form));
 }
 
+async function importText(text) {
+  try {
+    let res;
+    if (V.isEncryptedExport(text)) {
+      const pw = await dialog({
+        title: 'Daten übernehmen',
+        text: 'Master-Passwort des Geräts, von dem die Datei stammt:',
+        input: {},
+        confirmLabel: 'Übernehmen',
+      });
+      if (pw == null) return false;
+      res = await V.importEncrypted(text, pw);
+    } else {
+      res = await V.importCsv(text);
+    }
+    toast(`${res.added} neu, ${res.updated} aktualisiert${res.removed ? `, ${res.removed} gelöscht` : ''}`, 4000);
+    render();
+    return true;
+  } catch (ex) {
+    await dialog({ title: 'Import fehlgeschlagen', text: ex.message });
+    return false;
+  }
+}
+
+// Datei, die per „Teilen → PW Tresor“ empfangen wurde (vom Service Worker zwischengelagert).
+const INBOX_CACHE = 'share-inbox';
+
+async function hasInbox() {
+  try {
+    return !!(await (await caches.open(INBOX_CACHE)).match('inbox'));
+  } catch {
+    return false;
+  }
+}
+
+async function processInbox() {
+  if (!V.isUnlocked() || !(await hasInbox())) return;
+  const cache = await caches.open(INBOX_CACHE);
+  const text = await (await cache.match('inbox')).text();
+  await cache.delete('inbox');
+  state.inboxPending = false;
+  await importText(text);
+}
+
 async function afterRekey(what, bioRemoved) {
   await dialog({
     title: what,
@@ -671,35 +717,37 @@ function viewSettings() {
     }
   }));
 
-  // Export / Import
-  const exportBtn = h('button', { class: 'btn', type: 'button' }, 'Verschlüsselten Export speichern');
-  exportBtn.addEventListener('click', () => {
-    const blob = new Blob([V.exportEncrypted()], { type: 'application/json' });
-    const a = h('a', { href: URL.createObjectURL(blob), download: `pw-tresor-${new Date().toISOString().slice(0, 10)}.json` });
+  // Export / Teilen / Import
+  const exportName = (ext) => `pw-tresor-${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.${ext}`;
+  const download = (text, name) => {
+    const a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/plain' })), download: name });
     document.body.append(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  };
+  const shareBtn = h('button', { class: 'btn primary', type: 'button' }, 'Teilen (Bluetooth / Quick Share)');
+  shareBtn.addEventListener('click', async () => {
+    // .txt statt .json: Chrome erlaubt das Teilen von JSON-Dateien nicht.
+    const file = new File([V.exportEncrypted()], exportName('txt'), { type: 'text/plain' });
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'PW Tresor' });
+      } catch (ex) {
+        if (ex.name !== 'AbortError') await dialog({ title: 'Teilen nicht möglich', text: ex.message });
+      }
+    } else {
+      download(await file.text(), file.name);
+      toast('Teilen wird hier nicht unterstützt – Datei wurde stattdessen gespeichert.', 4000);
+    }
   });
-  const fileInput = h('input', { type: 'file', accept: '.json,.csv,application/json,text/csv', hidden: true });
-  const importBtn = h('button', { class: 'btn', type: 'button', onclick: () => fileInput.click() }, 'Importieren (Export-Datei oder CSV)');
+  const exportBtn = h('button', { class: 'btn', type: 'button' }, 'Als Datei speichern');
+  exportBtn.addEventListener('click', () => download(V.exportEncrypted(), exportName('txt')));
+  const fileInput = h('input', { type: 'file', accept: '.txt,.json,.csv,text/plain,application/json,text/csv', hidden: true });
+  const importBtn = h('button', { class: 'btn', type: 'button', onclick: () => fileInput.click() }, 'Importieren (Datei vom anderen Gerät oder CSV)');
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     fileInput.value = '';
-    if (!file) return;
-    const text = await file.text();
-    try {
-      let res;
-      if (/\.csv$/i.test(file.name) || file.type === 'text/csv') {
-        res = await V.importCsv(text);
-      } else {
-        const pw = await dialog({ title: 'Export-Datei entsperren', text: 'Master-Passwort, mit dem diese Datei exportiert wurde:', input: {}, confirmLabel: 'Importieren' });
-        if (pw == null) return;
-        res = await V.importEncrypted(text, pw);
-      }
-      toast(`${res.added} neu, ${res.updated} aktualisiert`, 3500);
-    } catch (ex) {
-      await dialog({ title: 'Import fehlgeschlagen', text: ex.message });
-    }
+    if (file) await importText(await file.text());
   });
 
   const delBtn = h('button', { class: 'btn danger', type: 'button' }, 'Tresor auf diesem Gerät löschen');
@@ -725,8 +773,9 @@ function viewSettings() {
         num('autoLockMinutes', 'Nach Inaktivität', [[1, '1 Minute'], [2, '2 Minuten'], [5, '5 Minuten'], [15, '15 Minuten'], [60, '1 Stunde']]),
         num('lockWhenHiddenSeconds', 'Wenn App im Hintergrund', [[0, 'Sofort'], [30, 'nach 30 Sekunden'], [60, 'nach 1 Minute'], [300, 'nach 5 Minuten']]),
         num('clipboardClearSeconds', 'Zwischenablage leeren', [[15, 'nach 15 Sekunden'], [30, 'nach 30 Sekunden'], [60, 'nach 1 Minute'], [0, 'nie']])),
-      section('Backup', h('p', { class: 'muted' }, 'Der Export ist mit deinem Master-Passwort verschlüsselt. Bewahre ihn z. B. in der Cloud oder auf einem USB-Stick auf.'),
-        exportBtn, importBtn, fileInput, persistInfo),
+      section('Geräte abgleichen & Backup',
+        h('p', { class: 'muted' }, 'Teilt alle Einträge verschlüsselt (mit deinem Master-Passwort) an ein anderes Gerät. Dort „Teilen → PW Tresor“ wählen oder hier auf „Importieren“ tippen. Neue, geänderte und gelöschte Einträge werden zusammengeführt.'),
+        shareBtn, exportBtn, importBtn, fileInput, persistInfo),
       section('Master-Passwort ändern',
         h('p', { class: 'muted' }, 'Erzeugt dabei automatisch auch einen neuen Tresor-Schlüssel.'), pwForm),
       section('Tresor-Schlüssel erneuern',
@@ -811,6 +860,7 @@ function readShareParams() {
     history.replaceState(null, '', location.pathname + location.search);
   }
   const p = new URLSearchParams(location.search);
+  if (p.has('inbox')) history.replaceState(null, '', location.pathname);
   const raw = [p.get('url'), p.get('text'), p.get('title')].filter(Boolean).join(' ');
   if (!raw) return;
   const domains = extractDomains(raw);
@@ -825,6 +875,7 @@ async function start() {
   readShareParams();
   state.bioAvailable = await isBiometricAvailable();
   state.hasVault = await V.init();
+  state.inboxPending = await hasInbox();
   history.replaceState({ view: 'list', params: {} }, '');
   render();
   if ('serviceWorker' in navigator) {

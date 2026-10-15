@@ -12,6 +12,7 @@ Kein Server, keine Cloud: alle Daten bleiben verschlüsselt auf dem Gerät.
 - Schnell kopieren direkt aus der Liste; die Zwischenablage wird automatisch geleert.
 - Passwort-Generator, Favoriten, „Zuletzt verwendet“, Suche
 - Automatische Sperre bei Inaktivität und im Hintergrund
+- **Geräte abgleichen**: „Teilen (Bluetooth / Quick Share)“ schickt alle Einträge verschlüsselt an ein anderes Gerät. Dort „Teilen → PW Tresor“ oder „Importieren“ wählen. Neue, geänderte und **gelöschte** Einträge werden zusammengeführt; bei Konflikten gewinnt die neuere Änderung.
 - Verschlüsselter Export und Import als Backup, CSV-Import aus Chrome, Firefox, Bitwarden und KeePass
 - Offline-fähig (Service Worker), strenge Content-Security-Policy, keine externen Skripte
 
@@ -59,7 +60,8 @@ Fingerabdruck ──PRF+HKDF──► KEK₂ ──┘
 | App, Offline, Verschlüsselung | ✅ | ✅ |
 | Fingerabdruck / Face ID (PRF) | ✅ Android 9+ | ✅ iOS 18+ |
 | Kamera-Erkennung | ✅ | ✅ |
-| Teilen-Ziel | ✅ | ❌ |
+| Teilen-Ziel (Links & Dateien empfangen) | ✅ | ❌ |
+| Teilen per Bluetooth / Quick Share | ✅ | ✅ (AirDrop) |
 
 ## Projektstruktur
 

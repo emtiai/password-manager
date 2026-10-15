@@ -1,6 +1,7 @@
 // Service Worker: macht die App offline-fähig.
 // Beim Ändern von Dateien VERSION erhöhen, damit Geräte die neue Version laden.
-const VERSION = 'v4';
+const VERSION = 'v5';
+const INBOX = 'share-inbox'; // per „Teilen“ empfangene Datei, bis die App sie übernimmt
 const SHELL = `shell-${VERSION}`;
 const OCR = `ocr-${VERSION}`;
 
@@ -36,16 +37,37 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     for (const key of await caches.keys()) {
-      if (key !== SHELL && key !== OCR) await caches.delete(key);
+      if (key !== SHELL && key !== OCR && key !== INBOX) await caches.delete(key);
     }
     await self.clients.claim();
   })());
 });
 
+// Teilen-Ziel: Android schickt geteilte Links/Dateien als POST an ./share-target.
+// Links werden als Query-Parameter weitergereicht, Dateien zwischengelagert.
+async function handleShare(req) {
+  const form = await req.formData();
+  const params = new URLSearchParams();
+  for (const key of ['title', 'text', 'url']) {
+    const v = form.get(key);
+    if (typeof v === 'string' && v) params.set(key, v);
+  }
+  const file = form.get('file');
+  if (file && typeof file !== 'string' && file.size) {
+    await (await caches.open(INBOX)).put('inbox', new Response(file));
+    params.set('inbox', '1');
+  }
+  return Response.redirect(new URL(`./?${params}`, self.registration.scope).href, 303);
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  if (req.method === 'POST' && url.origin === location.origin && url.pathname.endsWith('/share-target')) {
+    event.respondWith(handleShare(req));
+    return;
+  }
+  if (req.method !== 'GET') return;
   if (url.origin !== location.origin) return;
 
   // Teilen-Ziel und Start: immer die App-Shell ausliefern (Query-Parameter ignorieren).
