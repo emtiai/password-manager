@@ -1,7 +1,7 @@
 import * as V from './vault.js';
 import { generatePassword, estimateBits } from './crypto.js';
 import { extractDomains, matchEntries, normalizeHost } from './domain.js';
-import { isBiometricAvailable } from './webauthn.js';
+import { isBiometricAvailable, describeBiometricError } from './webauthn.js';
 import { requestPersistence } from './storage.js';
 
 const app = document.getElementById('app');
@@ -316,7 +316,7 @@ function viewLock() {
         await V.unlockWithBiometric();
         afterUnlock();
       } catch (ex) {
-        if (ex.name !== 'NotAllowedError' && ex.name !== 'AbortError') err.textContent = ex.message;
+        if (ex.name !== 'NotAllowedError' && ex.name !== 'AbortError') err.textContent = describeBiometricError(ex);
       }
     });
     bioBtn.addEventListener('click', tryBio);
@@ -608,7 +608,7 @@ function viewSettings() {
         toast('Fingerabdruck aktiviert');
         render();
       } catch (ex) {
-        if (ex.name !== 'NotAllowedError') await dialog({ title: 'Nicht möglich', text: ex.message });
+        await dialog({ title: 'Fingerabdruck nicht aktiviert', text: describeBiometricError(ex) });
       }
     }));
     bioContent = [h('p', { class: 'muted' }, 'Erstellt einen Passkey auf diesem Gerät. Der Tresor wird dann mit einem Schlüssel entsperrt, den nur dein Fingerabdruck freigibt.'), bioBtn];

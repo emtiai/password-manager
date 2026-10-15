@@ -63,7 +63,7 @@ p { margin: 0; }
 .muted { color: var(--muted); }
 .pad { padding: 12px 4px; }
 .center-text { text-align: center; }
-.error { color: var(--danger); min-height: 1.2em; font-size: 0.9rem; }
+.error { white-space: pre-line; color: var(--danger); min-height: 1.2em; font-size: 0.9rem; }
 .error:empty { display: none; }
 
 .card { background: var(--surface); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
@@ -206,6 +206,7 @@ input[type="range"] { flex: 1; padding: 0; border: none; background: none; min-h
 .dialog { border: none; border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 20px; width: min(92vw, 420px); }
 .dialog::backdrop { background: rgb(0 0 0 / 0.5); }
 .dialog form { display: flex; flex-direction: column; gap: 14px; }
+.dialog p { white-space: pre-line; }
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--safe-bottom) + 96px); z-index: 100;
   transform: translate(-50%, 20px); opacity: 0; transition: all 0.25s;

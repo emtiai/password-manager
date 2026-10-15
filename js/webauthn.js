@@ -31,7 +31,10 @@ export async function registerBiometric(prfSalt) {
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
       authenticatorSelection: {
         authenticatorAttachment: 'platform',
-        residentKey: 'discouraged',
+        // Android unterstützt PRF nur für echte Passkeys (Google Passwortmanager),
+        // nicht für den älteren Weg ohne auffindbaren Schlüssel.
+        residentKey: 'required',
+        requireResidentKey: true,
         userVerification: 'required',
       },
       timeout: 60_000,
@@ -40,7 +43,7 @@ export async function registerBiometric(prfSalt) {
   });
   const ext = cred.getClientExtensionResults?.().prf;
   if (!ext?.enabled && !ext?.results) {
-    throw new Error('Dieses Gerät/dieser Browser unterstützt die PRF-Erweiterung nicht. Entsperren per Fingerabdruck ist hier leider nicht möglich.');
+    throw new Error('Der gewählte Passkey-Speicher unterstützt die nötige PRF-Funktion nicht. Bitte erneut versuchen und als Speicherort den „Google Passwortmanager“ wählen (nicht Samsung Pass o. Ä.). Chrome sollte aktuell sein.');
   }
   const credId = new Uint8Array(cred.rawId);
   // Manche Plattformen liefern das PRF-Ergebnis schon bei der Registrierung,
@@ -63,4 +66,17 @@ export async function getBiometricSecret(credId, prfSalt) {
   const prf = prfResult(cred);
   if (!prf) throw new Error('Kein PRF-Ergebnis erhalten.');
   return prf;
+}
+
+// Übersetzt WebAuthn-Fehler in verständliche Hinweise (inkl. technischem Namen zur Fehlersuche).
+export function describeBiometricError(ex) {
+  const hints = {
+    NotAllowedError: 'Vorgang abgebrochen oder Zeit abgelaufen. Bitte erneut versuchen und den Fingerabdruck bestätigen.',
+    InvalidStateError: 'Für diese App existiert auf dem Gerät bereits ein Passkey. Bitte in den Einstellungen des Google Passwortmanagers den Eintrag für „emtiai.github.io“ löschen und erneut versuchen.',
+    NotSupportedError: 'Dieses Gerät oder der gewählte Passkey-Speicher unterstützt das Verfahren nicht. Bitte den „Google Passwortmanager“ als Speicherort wählen.',
+    SecurityError: 'Sicherheitsfehler: Die App muss über https://emtiai.github.io/… geöffnet werden, nicht über eine lokale Datei oder einen lokalen Server.',
+    ConstraintError: 'Auf dem Gerät ist keine Bildschirmsperre mit Fingerabdruck eingerichtet.',
+  };
+  const text = hints[ex?.name] || ex?.message || String(ex);
+  return `${text}\n\n(Technisch: ${ex?.name || 'Error'}: ${ex?.message || ''})`;
 }
