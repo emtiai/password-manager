@@ -4,7 +4,7 @@ import { extractDomains, matchEntries, normalizeHost } from './domain.js';
 import { isBiometricAvailable, describeBiometricError } from './webauthn.js';
 import { requestPersistence } from './storage.js';
 
-const APP_VERSION = 3; // bei jeder Änderung zusammen mit VERSION in sw.js erhöhen
+const APP_VERSION = 4; // bei jeder Änderung zusammen mit VERSION in sw.js erhöhen
 const app = document.getElementById('app');
 const isAndroid = /Android/i.test(navigator.userAgent);
 const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -585,6 +585,15 @@ function viewEdit() {
   return h('div', {}, header(existing ? 'Bearbeiten' : 'Neuer Eintrag', { back: true }), h('main', {}, form));
 }
 
+async function afterRekey(what, bioRemoved) {
+  await dialog({
+    title: what,
+    text: 'Bitte jetzt einen neuen Export als Backup speichern und alte Export-Dateien löschen.'
+      + (bioRemoved ? '\n\nDer Fingerabdruck wurde dabei deaktiviert und muss neu aktiviert werden.' : ''),
+  });
+  render();
+}
+
 function viewSettings() {
   const s = V.settings();
   const section = (title, ...children) => h('section', { class: 'card stack' }, h('h2', {}, title), ...children);
@@ -637,11 +646,28 @@ function viewSettings() {
     if (newPw.input.value.length < 10) return void (pwErr.textContent = 'Mindestens 10 Zeichen.');
     if (newPw.input.value !== newPw2.input.value) return void (pwErr.textContent = 'Neue Passwörter stimmen nicht überein.');
     try {
-      await V.changePassword(oldPw.input.value, newPw.input.value);
-      toast('Master-Passwort geändert. Bitte neuen Export als Backup anlegen.', 4000);
-      pwForm.reset();
+      const bioRemoved = await V.changePassword(oldPw.input.value, newPw.input.value);
+      await afterRekey('Master-Passwort geändert', bioRemoved);
     } catch (ex) {
       pwErr.textContent = ex.message;
+    }
+  }));
+
+  // Tresor-Schlüssel erneuern
+  const rotateBtn = h('button', { class: 'btn', type: 'button' }, 'Tresor-Schlüssel erneuern');
+  rotateBtn.addEventListener('click', busy(rotateBtn, async () => {
+    const pw = await dialog({
+      title: 'Tresor-Schlüssel erneuern',
+      text: 'Alle Einträge werden mit einem neuen Schlüssel verschlüsselt. Bitte Master-Passwort eingeben:',
+      input: {},
+      confirmLabel: 'Erneuern',
+    });
+    if (pw == null) return;
+    try {
+      const bioRemoved = await V.rotateKey(pw);
+      await afterRekey('Tresor-Schlüssel erneuert', bioRemoved);
+    } catch (ex) {
+      await dialog({ title: 'Nicht erneuert', text: ex.message });
     }
   }));
 
@@ -701,7 +727,11 @@ function viewSettings() {
         num('clipboardClearSeconds', 'Zwischenablage leeren', [[15, 'nach 15 Sekunden'], [30, 'nach 30 Sekunden'], [60, 'nach 1 Minute'], [0, 'nie']])),
       section('Backup', h('p', { class: 'muted' }, 'Der Export ist mit deinem Master-Passwort verschlüsselt. Bewahre ihn z. B. in der Cloud oder auf einem USB-Stick auf.'),
         exportBtn, importBtn, fileInput, persistInfo),
-      section('Master-Passwort ändern', pwForm),
+      section('Master-Passwort ändern',
+        h('p', { class: 'muted' }, 'Erzeugt dabei automatisch auch einen neuen Tresor-Schlüssel.'), pwForm),
+      section('Tresor-Schlüssel erneuern',
+        h('p', { class: 'muted' }, 'Verschlüsselt alle Einträge mit einem neuen Schlüssel, ohne das Passwort zu ändern. Sinnvoll, wenn ein Export in fremde Hände geraten sein könnte. Alte Export-Dateien lassen sich weiterhin mit dem Passwort öffnen, mit dem sie erstellt wurden, also bitte löschen.'),
+        rotateBtn),
       section('Gefahrenzone', delBtn),
       h('p', { class: 'muted center-text' }, `PW Tresor Version ${APP_VERSION} · ${V.entries().length} Einträge · alles lokal auf diesem Gerät`)));
 }

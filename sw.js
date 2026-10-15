@@ -1,6 +1,6 @@
 // Service Worker: macht die App offline-fähig.
 // Beim Ändern von Dateien VERSION erhöhen, damit Geräte die neue Version laden.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL = `shell-${VERSION}`;
 const OCR = `ocr-${VERSION}`;
 
@@ -24,7 +24,13 @@ const SHELL_FILES = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' umgeht den HTTP-Cache des Browsers. Sonst könnte ein Update
+  // (GitHub Pages erlaubt 10 Min. Zwischenspeicherung) wieder die alten Dateien übernehmen.
+  event.waitUntil((async () => {
+    const cache = await caches.open(SHELL);
+    await cache.addAll(SHELL_FILES.map((f) => new Request(f, { cache: 'reload' })));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {

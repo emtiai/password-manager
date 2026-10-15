@@ -110,16 +110,34 @@ export async function verifyPassword(password) {
   }
 }
 
-export async function changePassword(oldPassword, newPassword) {
-  if (!(await verifyPassword(oldPassword))) throw new Error('Aktuelles Master-Passwort ist falsch.');
+// Erzeugt einen komplett neuen Tresor-Schlüssel und verschlüsselt alle Daten damit neu.
+// Dadurch nützt ein früher geknacktes/bekanntes Passwort nichts mehr für neue Daten.
+// Der Fingerabdruck-Schlüssel gehört zum alten Tresor-Schlüssel und wird deshalb entfernt.
+// Rückgabe: true, wenn der Fingerabdruck neu aktiviert werden muss.
+async function rekey(password) {
+  const hadBiometric = !!record.bio;
   const salt = randomBytes(16);
-  const kek = await deriveKeyFromPassword(newPassword, salt, PBKDF2_ITERATIONS);
+  const kek = await deriveKeyFromPassword(password, salt, PBKDF2_ITERATIONS);
+  const newKey = await generateVaultKey();
   record = {
     ...record,
     kdf: { name: 'PBKDF2-SHA256', salt: toB64(salt), iterations: PBKDF2_ITERATIONS },
-    pwWrap: await wrapVaultKey(vaultKey, kek),
+    pwWrap: await wrapVaultKey(newKey, kek),
+    bio: null,
   };
+  vaultKey = newKey;
   await persist();
+  return hadBiometric;
+}
+
+export async function changePassword(oldPassword, newPassword) {
+  if (!(await verifyPassword(oldPassword))) throw new Error('Aktuelles Master-Passwort ist falsch.');
+  return rekey(newPassword);
+}
+
+export async function rotateKey(password) {
+  if (!(await verifyPassword(password))) throw new Error('Master-Passwort ist falsch.');
+  return rekey(password);
 }
 
 export async function destroy() {
