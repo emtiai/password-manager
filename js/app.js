@@ -4,6 +4,7 @@ import { extractDomains, matchEntries, normalizeHost } from './domain.js';
 import { isBiometricAvailable, describeBiometricError } from './webauthn.js';
 import { requestPersistence } from './storage.js';
 
+const APP_VERSION = 3; // bei jeder Änderung zusammen mit VERSION in sw.js erhöhen
 const app = document.getElementById('app');
 const isAndroid = /Android/i.test(navigator.userAgent);
 const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -702,7 +703,7 @@ function viewSettings() {
         exportBtn, importBtn, fileInput, persistInfo),
       section('Master-Passwort ändern', pwForm),
       section('Gefahrenzone', delBtn),
-      h('p', { class: 'muted center-text' }, `PW Tresor · ${V.entries().length} Einträge · alles lokal auf diesem Gerät`)));
+      h('p', { class: 'muted center-text' }, `PW Tresor Version ${APP_VERSION} · ${V.entries().length} Einträge · alles lokal auf diesem Gerät`)));
 }
 
 // ---------- Kamera ----------
@@ -797,7 +798,15 @@ async function start() {
   history.replaceState({ view: 'list', params: {} }, '');
   render();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // Neue Version übernehmen, sobald sie installiert ist: gesperrt sofort neu laden,
+    // entsperrt nur einen Hinweis zeigen (sonst gingen offene Eingaben verloren).
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
+      if (!V.isUnlocked()) location.reload();
+      else toast('Update installiert – App bitte neu starten.', 5000);
+    });
+    navigator.serviceWorker.register('./sw.js').then((reg) => reg.update()).catch(() => {});
   }
 }
 

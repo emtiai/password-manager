@@ -1,6 +1,6 @@
 // Service Worker: macht die App offline-fähig.
 // Beim Ändern von Dateien VERSION erhöhen, damit Geräte die neue Version laden.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL = `shell-${VERSION}`;
 const OCR = `ocr-${VERSION}`;
 
